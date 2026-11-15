@@ -228,3 +228,75 @@ asyncio.run(main())
     assert "get_current_address" not in result["tools"]
     assert not result["error"], result["info"]
     assert json.loads(result["info"])["name"] == BINARIES["elf"]
+
+
+# --- hd2-extensions: program control against an UNANALYSED program ------------------------
+# Without auto-analysis the code is still raw bytes, so create_function must disassemble first.
+# (In analysed programs Ghidra 12 already disassembles nearly every code reference, so this path
+# cannot be exercised there.)
+
+
+@pytest.fixture(scope="module")
+def raw_pe():
+    pytest.importorskip("pyghidra")
+    from ghidra_mcp.backend import DeferredBackend
+    from ghidra_mcp.headless import HeadlessOptions, HeadlessSession
+    from ghidra_mcp.server import create_server
+
+    backend = DeferredBackend(5, 120, wait_timeout=1)
+    session = HeadlessSession(
+        HeadlessOptions(
+            binary=FIXTURES / BINARIES["pe"],
+            ghidra_install_dir=Path(GHIDRA),
+            extension_jar=JAR,
+            analyze=False,
+        ),
+        backend,
+    )
+    session.start()
+    session.load()
+    try:
+        yield create_server(backend, capabilities=set())
+    finally:
+        session.close()
+
+
+# The x64 PE loader already creates functions from .pdata (and the entry point) even without
+# analysis. FUN_140003140 of sample_x86_64.exe has no .pdata entry: it only appears after
+# auto-analysis, so in the unanalysed program its bytes are still undefined.
+RAW_CODE_PE = "140003140"
+
+
+def test_create_function_disassembles_raw_bytes(raw_pe):
+    entry = RAW_CODE_PE
+    created = call(raw_pe, "create_function", address=entry, name="hd2_entry")
+    assert created["already_existed"] is False
+    assert created["disassembled"] is True, "entry point should still be raw bytes without analysis"
+    assert created["function"]["name"] == "hd2_entry"
+    assert created["instruction_count"] > 0
+    assert int(created["body_end"], 16) >= int(created["body_start"], 16)
+    code = call(raw_pe, "decompile_function_by_address", address=entry)["code"]
+    assert "hd2_entry" in code
+
+    again = call(raw_pe, "create_function", address=entry)
+    assert again["already_existed"] is True and again["disassembled"] is False
+    assert again["function"]["name"] == "hd2_entry"
+
+
+def test_create_function_inside_existing_function_conflicts(raw_pe):
+    # a multi-instruction function (created here, or found existing if the raw-bytes test ran first)
+    created = call(raw_pe, "create_function", address=RAW_CODE_PE)
+    assert created["instruction_count"] > 1
+    inside = hex(int(created["body_start"], 16) + 1)
+    with pytest.raises(ToolError, match="CONFLICT"):
+        call(raw_pe, "create_function", address=inside)
+
+
+def test_disassemble_at_and_save(raw_pe):
+    # pick an address inside .text that is not covered by the entry function yet
+    text = next(s for s in call(raw_pe, "list_segments")["items"] if s["name"] == ".text")
+    result = call(raw_pe, "disassemble_at", address=text["start"])
+    assert result["bytes_disassembled"] >= 0  # already-code start is allowed; must not fail
+    saved = call(raw_pe, "save_program")
+    assert saved["program"] == BINARIES["pe"]
+    assert isinstance(saved["had_changes"], bool)
