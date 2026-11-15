@@ -31,7 +31,7 @@ import ghidra.util.task.TaskMonitor;
  */
 public final class BackendHttpServer {
 
-	public static final String VERSION = "2.0.0";
+	public static final String VERSION = "2.0.0+hd2.1";
 
 	private static final Set<String> ALLOWED_HOSTS = Set.of("127.0.0.1", "localhost", "[::1]");
 
@@ -121,6 +121,14 @@ public final class BackendHttpServer {
 		post("/set_disassembly_comment", (q, p) -> service.setComment(p, q.required("address"), q.present("comment"), CommentType.EOL));
 		post("/set_function_prototype", (q, p) -> service.setFunctionPrototype(p, q.required("function_address"), q.required("prototype"), provider.getDataTypeService(), monitor));
 		post("/set_local_variable_type", (q, p) -> service.setLocalVariableType(p, q.required("function_address"), q.required("variable_name"), q.required("new_type"), monitor));
+
+		// hd2-extensions: program control
+		post("/create_function", (q, p) -> service.createFunction(p, q.required("address"), q.optional("name")));
+		post("/disassemble", (q, p) -> service.disassembleAt(p, q.required("address")));
+		post("/save_program", (q, p) -> service.saveProgram(p));
+		post("/goto", (q, p) -> provider.goTo(GhidraAnalysisService.parseAddress(p, q.required("address"))));
+		routes.put("/open_programs", new Route("GET", false, (q, p) -> Map.of("programs", provider.listOpenPrograms())));
+		routes.put("/open_program", new Route("POST", false, (q, p) -> provider.openProgram(q.required("name"))));
 	}
 
 	private void get(String path, Handler handler) {

@@ -11,7 +11,7 @@ from ghidra_mcp.backend import BackendError, GhidraBackend
 
 CAP_GUI_CONTEXT = "gui_context"
 
-GUI_ONLY_TOOLS = ("get_current_address", "get_current_function")
+GUI_ONLY_TOOLS = ("get_current_address", "get_current_function", "goto", "list_open_programs", "open_program")
 
 INSTRUCTIONS = """\
 Tools for reverse engineering the program open in Ghidra. Call get_program_info first to confirm
@@ -134,6 +134,24 @@ def create_server(
             """Get the function containing the address currently selected in the Ghidra GUI."""
             return get("current_function")
 
+        @mcp.tool()
+        def goto(address: str) -> Result:
+            """Move the Ghidra GUI listing/decompiler view to an address (like pressing G),
+            e.g. to show the user what is being analysed."""
+            return post("goto", address=address)
+
+        @mcp.tool()
+        def list_open_programs() -> Result:
+            """List the programs open as tabs in the CodeBrowser and which one is current.
+            All other tools work on the current program."""
+            return get("open_programs")
+
+        @mcp.tool()
+        def open_program(name: str) -> Result:
+            """Make a program the current CodeBrowser tab by name (e.g. "LS3DF.dll"),
+            opening it from the Ghidra project first if it is not open yet."""
+            return post("open_program", name=name)
+
     @mcp.tool()
     def decompile_function(name: str) -> Result:
         """Decompile a function by name and return C pseudocode. Fails if the name is ambiguous;
@@ -247,6 +265,31 @@ def create_server(
             variable_name=variable_name,
             new_type=new_type,
         )
+
+    # --- hd2-extensions: program control -------------------------------------------------
+
+    @mcp.tool()
+    def create_function(address: str, name: str | None = None) -> Result:
+        """Create a function at an address (like pressing F). Disassembles first if the bytes
+        are still undefined, which is typical for code only reachable via vtables or jump
+        tables. Returns the function, its body range and instruction count. If a function
+        already starts there it is returned with already_existed=true."""
+        params = {"address": address}
+        if name:
+            params["name"] = name
+        return post("create_function", **params)
+
+    @mcp.tool()
+    def disassemble_at(address: str) -> Result:
+        """Disassemble starting at an address, following flow (like pressing D). Use it for
+        undefined code bytes; to create a function there, prefer create_function."""
+        return post("disassemble", address=address)
+
+    @mcp.tool()
+    def save_program() -> Result:
+        """Save the current program (renames, comments, created functions) to the Ghidra
+        project. Call after a batch of modifications."""
+        return post("save_program")
 
     @mcp.tool()
     def set_decompiler_comment(address: str, comment: str) -> Result:

@@ -82,4 +82,21 @@ public final class Model {
 	public record VariableTypeSet(FunctionRef function, String variable, String oldType,
 			String newType) {
 	}
+
+	// hd2-extensions: program control
+	public record FunctionCreated(FunctionRef function, boolean alreadyExisted, boolean disassembled,
+			String bodyStart, String bodyEnd, long instructionCount) {
+	}
+
+	public record Disassembled(String address, long bytesDisassembled) {
+	}
+
+	public record Saved(String program, boolean hadChanges) {
+	}
+
+	public record GoTo(String address, boolean moved) {
+	}
+
+	public record OpenProgram(String name, String projectPath, boolean current) {
+	}
 }

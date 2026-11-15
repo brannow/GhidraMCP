@@ -10,7 +10,9 @@ import java.util.function.Supplier;
 
 import com.lauriewired.ghidramcp.core.Model.*;
 
+import ghidra.app.cmd.disassemble.DisassembleCommand;
 import ghidra.app.cmd.function.ApplyFunctionSignatureCmd;
+import ghidra.app.cmd.function.CreateFunctionCmd;
 import ghidra.app.cmd.function.FunctionRenameOption;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
@@ -610,6 +612,88 @@ public class GhidraAnalysisService {
 			program.getListing().setComment(addr, type, comment.isEmpty() ? null : comment);
 			return new CommentSet(str(addr), type.name(),
 				program.getListing().getComment(type, addr));
+		});
+	}
+
+	// ------------------------------------------------------------------------------------------
+	// Program control (hd2-extensions)
+	// ------------------------------------------------------------------------------------------
+
+	/**
+	 * Create a function at an address, disassembling first if the bytes are still undefined
+	 * (typical for code only reachable through vtables or jump tables).
+	 */
+	public FunctionCreated createFunction(Program program, String address, String name) {
+		Address addr = parseAddress(program, address);
+		return write(program, "Create function", () -> {
+			FunctionManager fm = program.getFunctionManager();
+			Function existing = fm.getFunctionAt(addr);
+			if (existing != null) {
+				return functionCreated(program, existing, true, false);
+			}
+			Function containing = fm.getFunctionContaining(addr);
+			if (containing != null) {
+				throw McpException.conflict(addr + " lies inside existing function " +
+					containing.getName() + " @ " + containing.getEntryPoint());
+			}
+			boolean disassembled = false;
+			if (program.getListing().getInstructionAt(addr) == null) {
+				DisassembleCommand dis = new DisassembleCommand(addr, null, true);
+				if (!dis.applyTo(program, TaskMonitor.DUMMY) ||
+					program.getListing().getInstructionAt(addr) == null) {
+					throw McpException.failed("Disassembly at " + addr + " failed: " +
+						dis.getStatusMsg(), null);
+				}
+				disassembled = true;
+			}
+			String fname = name == null || name.isBlank() ? null : name.trim();
+			CreateFunctionCmd cmd = new CreateFunctionCmd(fname, addr, null,
+				fname == null ? SourceType.DEFAULT : SourceType.USER_DEFINED);
+			if (!cmd.applyTo(program, TaskMonitor.DUMMY) || cmd.getFunction() == null) {
+				throw McpException.failed("Creating a function at " + addr + " failed: " +
+					cmd.getStatusMsg(), null);
+			}
+			return functionCreated(program, cmd.getFunction(), false, disassembled);
+		});
+	}
+
+	private FunctionCreated functionCreated(Program program, Function f, boolean existed,
+			boolean disassembled) {
+		long count = 0;
+		for (Instruction ignored : program.getListing().getInstructions(f.getBody(), true)) {
+			count++;
+		}
+		return new FunctionCreated(new FunctionRef(f.getName(), str(f.getEntryPoint())), existed,
+			disassembled, str(f.getBody().getMinAddress()), str(f.getBody().getMaxAddress()), count);
+	}
+
+	/** Disassemble starting at an address, following flow (like pressing D in the listing). */
+	public Disassembled disassembleAt(Program program, String address) {
+		Address addr = parseAddress(program, address);
+		return write(program, "Disassemble", () -> {
+			DisassembleCommand dis = new DisassembleCommand(addr, null, true);
+			if (!dis.applyTo(program, TaskMonitor.DUMMY)) {
+				throw McpException.failed("Disassembly at " + addr + " failed: " +
+					dis.getStatusMsg(), null);
+			}
+			return new Disassembled(str(addr), dis.getDisassembledAddressSet().getNumAddresses());
+		});
+	}
+
+	/** Save the program to its project (not possible inside a transaction, so not via write()). */
+	public Saved saveProgram(Program program) {
+		return writeExecutor.execute(() -> {
+			boolean changed = program.isChanged();
+			try {
+				if (changed) {
+					program.getDomainFile().save(TaskMonitor.DUMMY);
+				}
+			}
+			catch (Exception e) {
+				throw McpException.failed("Saving " + program.getName() + " failed: " +
+					e.getMessage(), e);
+			}
+			return new Saved(program.getName(), changed);
 		});
 	}
 

@@ -38,4 +38,18 @@ public interface ProgramProvider {
 	 * Runtime exceptions thrown by the action propagate to the caller.
 	 */
 	<T> T runWrite(Supplier<T> action);
+
+	// hd2-extensions: GUI program control. Unsupported unless the provider overrides them.
+
+	default Model.GoTo goTo(Address address) {
+		throw McpException.unsupported("goto is only available in the GUI, not in " + mode() + " mode");
+	}
+
+	default java.util.List<Model.OpenProgram> listOpenPrograms() {
+		throw McpException.unsupported("Program tabs are only available in the GUI");
+	}
+
+	default Model.OpenProgram openProgram(String name) {
+		throw McpException.unsupported("Opening programs is only available in the GUI");
+	}
 }
